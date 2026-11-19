@@ -1,0 +1,62 @@
+name: Deploy to Vercel
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Only one production deployment at a time; a newer push cancels an in-flight run.
+concurrency:
+  group: vercel-production-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+  VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+jobs:
+  deploy:
+    name: Build and deploy to production
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install dependencies
+        # `npm ci` keeps the lockfile deterministic; the fallback works around the known
+        # npm optional-dependencies bug that can leave native bindings (esbuild, oxc,
+        # tailwindcss-oxide) missing on some runners.
+        run: npm ci || npm install --no-audit --no-fund
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Pull Vercel project settings
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      - name: Build Vercel artifacts
+        run: vercel build --prod --token="$VERCEL_TOKEN"
+
+      - name: Deploy prebuilt output to Vercel
+        id: deploy
+        run: |
+          url=$(vercel deploy --prebuilt --prod --yes --token="$VERCEL_TOKEN")
+          echo "deployment_url=$url" >> "$GITHUB_OUTPUT"
+          echo "### Deployed to production ✅" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "[$url]($url)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Triggered by: @${{ github.actor }}" >> "$GITHUB_STEP_SUMMARY"
